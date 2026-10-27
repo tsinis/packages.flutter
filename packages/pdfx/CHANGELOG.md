@@ -1,3 +1,9 @@
+## Unreleased
+
+* Fixed iOS/macOS pages with `/Rotate 90` or `/Rotate 270` being squeezed in `PdfViewPinch`: `PdfPage.width`/`height` now report the displayed (rotated) size, as on Android, web and Windows [issue#554](https://github.com/ScerIO/packages.flutter/issues/554) [issue#400](https://github.com/ScerIO/packages.flutter/issues/400) [issue#366](https://github.com/ScerIO/packages.flutter/issues/366)
+* Fixed `PdfViewPinch` calling `setState` after dispose when it is unmounted before a scheduled relayout runs (based on [pull#648](https://github.com/ScerIO/packages.flutter/pull/648) by @Yusuke-Shimamura)
+* Fixed `PdfControllerPinch` throwing a null check error when its viewer is disposed while the document is still loading, and `PdfViewPinch` creating textures or re-attaching to the controller after dispose
+
 ## 2.11.0
 
 * Added Swift Package Manager support for iOS and macOS, consolidating the duplicated Apple implementation into shared Darwin sources while retaining CocoaPods compatibility [pull#623](https://github.com/ScerIO/packages.flutter/pull/623)

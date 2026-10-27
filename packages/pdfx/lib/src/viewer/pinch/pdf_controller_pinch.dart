@@ -86,10 +86,21 @@ class PdfControllerPinch extends TransformationController
       _state?._releasePages();
 
       _document = await documentFuture;
+      // The viewer can be disposed while the document loads. Forget the
+      // document then, so a viewer attached later loads it again.
+      final state = _state;
+      if (state == null) {
+        _document = null;
+        return;
+      }
 
-      _state!._pages.clear();
+      state._pages.clear();
       final List<_PdfPageState> pages = [];
       final firstPage = await _document!.getPage(1, autoCloseAndroid: true);
+      if (!identical(_state, state)) {
+        _document = null;
+        return;
+      }
       final firstPageSize = Size(
         firstPage.width,
         firstPage.height,
@@ -100,8 +111,9 @@ class PdfControllerPinch extends TransformationController
           pageSize: firstPageSize,
         ));
       }
-      _state!._firstControllerAttach = true;
-      _state!._pages.addAll(pages);
+      state
+        .._firstControllerAttach = true
+        .._pages.addAll(pages);
 
       if (initialPage > 1) {
         _pendingInitialPage = initialPage;
@@ -109,7 +121,11 @@ class PdfControllerPinch extends TransformationController
 
       loadingState.value = PdfLoadingState.success;
     } catch (error) {
-      _state!._loadingError =
+      final state = _state;
+      if (state == null) {
+        return;
+      }
+      state._loadingError =
           error is Exception ? error : Exception('Unknown error');
       loadingState.value = PdfLoadingState.error;
     }
@@ -131,8 +147,12 @@ class PdfControllerPinch extends TransformationController
     _state = pdfViewState;
 
     addListener(() {
+      final state = _state;
+      if (state == null) {
+        return;
+      }
       if (page != _prevPage) {
-        _state!.widget.onPageChanged?.call(page);
+        state.widget.onPageChanged?.call(page);
         pageListenable.value = page;
         _prevPage = page;
       }

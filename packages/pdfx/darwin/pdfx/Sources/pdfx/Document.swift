@@ -50,15 +50,20 @@ class Page {
         }
     }
 
+    /// Displayed width: a page with `/Rotate 90` or `/Rotate 270` swaps the
+    /// sides of its media box, the same as the Android, web and Windows
+    /// implementations (and `CGPDFPage.getRotatedSize()`, which the texture
+    /// renderer scales by).
     var width: Double {
         get {
-            return Double(boxRect.width)
+            return Double(isLandscape ? boxRect.height : boxRect.width)
         }
     }
 
+    /// Displayed height, see `width`.
     var height: Double {
         get {
-            return Double(boxRect.height)
+            return Double(isLandscape ? boxRect.width : boxRect.height)
         }
     }
 
@@ -76,7 +81,10 @@ class Page {
 
     func render(width: Int, height: Int, crop: CGRect?, compressFormat: CompressFormat, backgroundColor: String = "#ffffff", quality: Int) -> Page.DataResult? {
         let box = renderer.getBoxRect(.mediaBox)
-        let bitmapSize = isLandscape ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
+        // `width`/`height` come from the displayed (rotated) page size, so the
+        // bitmap already has the page's on-screen orientation.
+        let bitmapSize = CGSize(width: width, height: height)
+        let rotatedBox = renderer.getRotatedSize()
         let stride = Int(bitmapSize.width * 4)
         var tempData = Data(repeating: 0, count: stride * Int(bitmapSize.height))
         var data: Data?
@@ -91,9 +99,12 @@ class Page {
             if context != nil {
                 // Credit: https://stackoverflow.com/a/35985236
                 // We change the context scale to fill completely the destination size (scale-down is handled by getDrawingTransform)
-                if box.width < bitmapSize.width {
-                    let sx = CGFloat(width) / box.width
-                    let sy = CGFloat(height) / box.height
+                if rotatedBox.width < bitmapSize.width {
+                    // The scale applies in (unrotated) PDF space: for a page
+                    // rotated by 90/270 the box's x axis runs along the
+                    // bitmap's height.
+                    let sx = CGFloat(isLandscape ? height : width) / box.width
+                    let sy = CGFloat(isLandscape ? width : height) / box.height
                     transform = transform.scaledBy(x: sx, y: sy)
 
                     transform.tx = -(box.origin.x * transform.a + box.origin.y * transform.b)

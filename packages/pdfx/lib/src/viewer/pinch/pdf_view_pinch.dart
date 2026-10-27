@@ -126,27 +126,30 @@ class _PdfViewPinchState extends State<PdfViewPinch>
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
-    widget.controller.loadingState.addListener(() {
-      switch (widget.controller.loadingState.value) {
-        case PdfLoadingState.loading:
-          _pages.clear();
-          break;
-        case PdfLoadingState.success:
-          widget.onDocumentLoaded?.call(widget.controller._document!);
-          break;
-        case PdfLoadingState.error:
-          widget.onDocumentError?.call(_loadingError!);
-          break;
-      }
+    widget.controller.loadingState.addListener(_onLoadingStateChanged);
+  }
 
-      if (mounted) {
-        setState(() {});
-      }
-    });
+  void _onLoadingStateChanged() {
+    switch (widget.controller.loadingState.value) {
+      case PdfLoadingState.loading:
+        _pages.clear();
+        break;
+      case PdfLoadingState.success:
+        widget.onDocumentLoaded?.call(widget.controller._document!);
+        break;
+      case PdfLoadingState.error:
+        widget.onDocumentError?.call(_loadingError!);
+        break;
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
   void dispose() {
+    widget.controller.loadingState.removeListener(_onLoadingStateChanged);
     _controller._detach();
     _cancelLastRealSizeUpdate();
     _releasePages();
@@ -226,6 +229,11 @@ class _PdfViewPinchState extends State<PdfViewPinch>
       _firstControllerAttach = false;
 
       Future.delayed(Duration.zero, () {
+        // A viewer disposed before its first layout settled must not
+        // re-attach itself to the controller.
+        if (!mounted) {
+          return;
+        }
         // NOTE: controller should be associated
         // after first layout calculation finished.
         _controller
@@ -233,18 +241,15 @@ class _PdfViewPinchState extends State<PdfViewPinch>
           .._setViewerState(this);
         // widget.params?.onViewerControllerInitialized?.call(_controller);
 
-        if (mounted) {
-          final initialPage = _controller.initialPage;
-          if (initialPage != 1) {
-            final m =
-                _controller.calculatePageFitMatrix(pageNumber: initialPage);
-            if (m != null) {
-              _controller.value = m;
-            }
+        final initialPage = _controller.initialPage;
+        if (initialPage != 1) {
+          final m = _controller.calculatePageFitMatrix(pageNumber: initialPage);
+          if (m != null) {
+            _controller.value = m;
           }
-          _forceUpdatePagePreviews = true;
-          _determinePagesToShow();
         }
+        _forceUpdatePagePreviews = true;
+        _determinePagesToShow();
       });
       return;
     }
@@ -362,7 +367,13 @@ class _PdfViewPinchState extends State<PdfViewPinch>
   }
 
   void _needReLayout() {
-    Future.delayed(Duration.zero, () => setState(() {}));
+    Future.delayed(Duration.zero, () {
+      // The callback can land after this State was disposed (e.g. the viewer
+      // is unmounted in the same frame that scheduled the relayout).
+      if (mounted) {
+        setState(() {});
+      }
+    });
   }
 
   void _needPagePreviewGeneration() {
@@ -399,6 +410,9 @@ class _PdfViewPinchState extends State<PdfViewPinch>
             page.pageNumber,
             autoCloseAndroid: true,
           );
+        if (!mounted) {
+          return;
+        }
         final prevPageSize = page.pageSize;
         page
           ..pageSize = Size(page.pdfPage.width, page.pdfPage.height)
@@ -409,13 +423,19 @@ class _PdfViewPinchState extends State<PdfViewPinch>
         }
       }
       if (page.status == _PdfPageLoadingStatus.initialized) {
-        page
-          ..status = _PdfPageLoadingStatus.pageLoading
-          ..preview = await page.pdfPage.createTexture();
+        page.status = _PdfPageLoadingStatus.pageLoading;
+        final preview = await page.pdfPage.createTexture();
+        if (!mounted) {
+          // dispose() already released this page's textures, so a texture
+          // created after it would never be released.
+          await preview.dispose();
+          return;
+        }
+        page.preview = preview;
         final w = page.pdfPage.width; // * 2;
         final h = page.pdfPage.height; // * 2
 
-        await page.preview!.updateRect(
+        await preview.updateRect(
           documentId: _controller._document!.id,
           width: w.toInt(),
           height: h.toInt(),
@@ -426,6 +446,9 @@ class _PdfViewPinchState extends State<PdfViewPinch>
           allowAntiAliasing: true,
           backgroundColor: '#ffffff',
         );
+        if (!mounted) {
+          return;
+        }
 
         page
           ..status = _PdfPageLoadingStatus.pageLoaded
@@ -437,7 +460,7 @@ class _PdfViewPinchState extends State<PdfViewPinch>
   }
 
   Future<void> _updateRealSizeOverlay() async {
-    if (_pages.isEmpty) {
+    if (!mounted || _pages.isEmpty) {
       return;
     }
 
@@ -478,17 +501,24 @@ class _PdfViewPinchState extends State<PdfViewPinch>
       } else {
         // render real-size overlay
         final offset = part.topLeft - pageRectZoomed.topLeft;
-        page
-          ..realSizeOverlayRect = Rect.fromLTWH(
-            offset.dx / r,
-            offset.dy / r,
-            part.width / r,
-            part.height / r,
-          )
-          ..realSize ??= await page.pdfPage.createTexture();
+        page.realSizeOverlayRect = Rect.fromLTWH(
+          offset.dx / r,
+          offset.dy / r,
+          part.width / r,
+          part.height / r,
+        );
+        var realSize = page.realSize;
+        if (realSize == null) {
+          realSize = await page.pdfPage.createTexture();
+          if (!mounted) {
+            await realSize.dispose();
+            return;
+          }
+          page.realSize = realSize;
+        }
         final w = (part.width * dpr).toInt();
         final h = (part.height * dpr).toInt();
-        await page.realSize!.updateRect(
+        await realSize.updateRect(
           documentId: _controller._document!.id,
           width: w,
           height: h,
@@ -501,6 +531,9 @@ class _PdfViewPinchState extends State<PdfViewPinch>
           allowAntiAliasing: true,
           backgroundColor: '#ffffff',
         );
+        if (!mounted) {
+          return;
+        }
         page._updateRealSizeOverlay();
       }
     }
